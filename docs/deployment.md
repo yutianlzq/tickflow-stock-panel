@@ -67,6 +67,228 @@ git pull
 docker compose up --build -d
 ```
 
+### 生产 Docker Compose 部署
+
+生产环境建议使用独立的源码目录、私有 `.env` 和私有 Compose override，避免把运行数据、认证配置或反向代理配置混入仓库。以下示例只使用通用占位符，不要把真实密码、API Key、SSH 私钥、服务器地址、域名或 Tunnel 凭据写入代码仓库或文档。
+
+#### 目录约定
+
+```text
+<APP_DIR>/                         # Git 源码目录，例如 /opt/tickflow-stock-panel
+<DATA_DIR>/                        # 运行数据目录，例如 /data/tickflow-stock-panel
+<APP_DIR>/.env                     # 私有环境配置，权限 600
+<APP_DIR>/docker-compose.override.yml  # 私有生产覆盖，权限 600
+```
+
+`<DATA_DIR>` 应作为 Docker 的 `/app/data` 持久化挂载。不要使用 `docker compose down -v`、`git clean -fdx`、`git reset --hard` 或删除整个源码目录的方式更新部署。
+
+#### 私有环境配置
+
+从模板创建 `.env`，真实值只保存在部署主机的权限受控文件或密钥管理系统中：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+无实时行情需求时可以保持：
+
+```ini
+TICKFLOW_API_KEY=
+```
+
+启用 Sequoia-X 第三方数据源时，在私有 `.env` 中设置：
+
+```ini
+BACKEND_EXTRAS=sequoia
+```
+
+公网部署必须配置访问密码，但本文不记录密码本身：
+
+```ini
+AUTH_PASSWORD=<在部署主机本地填写的强密码>
+```
+
+AI 配置同样只在私有 `.env` 或应用设置页录入，不要把真实 Key 写入 Git：
+
+```ini
+AI_PROVIDER=openai_compat
+AI_BASE_URL=<兼容 OpenAI API 的服务地址>
+AI_API_KEY=<部署主机本地填写>
+AI_MODEL=<部署主机本地填写>
+```
+
+#### 私有 Compose override
+
+当生产环境需要让现有反向代理通过 Docker 网络访问应用时，在 `<APP_DIR>/docker-compose.override.yml` 写入以下内容。`proxy` 必须是部署主机上已经存在的外部 Docker 网络；不要在项目仓库中提交该文件：
+
+```yaml
+services:
+  app:
+    ports: !override
+      - "127.0.0.1:3018:3018"
+    environment:
+      PORT: "3018"
+    volumes:
+      - <DATA_DIR>:/app/data
+    networks:
+      default:
+      proxy:
+        aliases:
+          - tickflow-stock-panel
+
+networks:
+  proxy:
+    external: true
+```
+
+启动前先检查最终 Compose 配置：
+
+```bash
+cd <APP_DIR>
+docker compose config
+docker compose ps
+```
+
+确认以下约束成立：
+
+- 应用只绑定宿主机回环地址 `127.0.0.1:3018`；
+- 数据卷指向 `<DATA_DIR>:/app/data`；
+- `proxy` 为已有外部网络；
+- `BACKEND_EXTRAS=sequoia` 被解析为构建参数；
+- 启用 stock-sdk 时，构建日志/配置明确显示 `INCLUDE_STOCKSDK=1`；
+- `.env` 和 override 文件权限为 `600`。
+
+#### 构建、启动与健康检查
+
+国际网络环境使用：
+
+```bash
+cd <APP_DIR>
+docker compose build --build-arg USE_CN_MIRROR=0
+docker compose up -d --remove-orphans
+curl -fsS http://127.0.0.1:3018/health
+```
+
+如需在生产镜像中启用可选 `stock-sdk` 插件，必须显式传入构建参数：
+
+```bash
+cd <APP_DIR>
+docker compose build \
+  --build-arg USE_CN_MIRROR=0 \
+  --build-arg INCLUDE_STOCKSDK=1
+docker compose up -d --force-recreate --remove-orphans
+```
+
+启用后 Docker 会安装 Node.js 运行时和 `stock-sdk` 依赖。该插件通过第三方财经网站接口获取行情，可能受对方服务条款、反爬限制和行情版权约束；启用者应自行确认授权与合规性。默认只验证插件探活，不建议未经评估就切换全市场日 K、分钟或实时数据源，也不要在高频任务中反复请求上游接口。
+
+如需禁用，重新构建时显式传入：
+
+```bash
+docker compose build \
+  --build-arg USE_CN_MIRROR=0 \
+  --build-arg INCLUDE_STOCKSDK=0
+docker compose up -d --force-recreate --remove-orphans
+```
+
+预期健康响应至少包含：
+
+```json
+{"status":"ok"}
+```
+
+使用 Sequoia-X 时，启动日志应能看到插件注册信息；随后可在「设置 → 数据源」确认插件状态。生产镜像为 ARM64 或其他架构时，应使用目标主机架构构建，或使用已验证的多架构镜像。
+
+#### 分支部署与更新脚本
+
+部署脚本应接收显式分支参数，默认分支按项目约定设置。示例：
+
+```bash
+BRANCH=main sudo <DATA_DIR>/deploy.sh
+```
+
+脚本推荐执行以下顺序：
+
+1. `git fetch --prune` 获取指定分支；
+2. 使用 `git merge --ff-only` 更新源码；
+3. 执行 `docker compose build`；
+4. 执行 `docker compose up -d --remove-orphans`；
+5. 轮询 `/health`，失败时输出容器日志并返回非零状态。
+
+脚本不得执行清理运行数据的命令，也不得打印 `.env` 的内容。部署 Sequoia-X 的项目主分支时，确认私有 `.env` 仍保留 `BACKEND_EXTRAS=sequoia`。
+
+#### 反向代理与 Cloudflare Tunnel
+
+推荐访问链路为：
+
+```text
+客户端 HTTPS
+  -> Cloudflare Tunnel
+  -> 现有反向代理容器
+  -> tickflow-stock-panel:3018
+```
+
+反向代理和 Tunnel 的具体配置属于部署主机私有配置，不写入本仓库。反向代理上游使用 Docker 网络内的：
+
+```text
+tickflow-stock-panel:3018
+```
+
+不要把应用的 3018 端口直接开放到公网。反向代理应正确转发 WebSocket 和 `X-Forwarded-For`；Cloudflare 缓存规则不要缓存 `/api/*` 和 `/health`。
+
+#### Sequoia-X 部署后验证
+
+```bash
+# 版本与分支
+git branch --show-current
+git rev-parse --short HEAD
+
+# 容器与数据卷
+docker compose ps
+docker inspect TickFlow_Stock_Panel
+
+# 健康检查
+curl -fsS http://127.0.0.1:3018/health
+```
+
+认证后在 API 或设置页检查：
+
+- `sequoia_x` 插件为 `available=true`；
+- `stocksdk` 插件在显式启用时为 `available=true`，并显示探活状态；
+- Baostock 日 K 返回标准字段；
+- AkShare 扩展数据按实际上游结果显示；
+- Sequoia-X 6 个策略出现在股票日线策略池；
+- 未声明的除权、分钟和实时数据仍按现有 provider 回退规则处理。
+
+后端测试：
+
+```bash
+cd <APP_DIR>/backend
+uv sync --extra dev --extra sequoia
+uv run pytest tests/backtest/test_sequoia_strategies.py \
+  tests/test_sequoia_provider.py tests/test_ext_private_placement.py -q
+uv run ruff check app/plugins/sequoia_x \
+  app/strategy/builtin/sequoia_*.py \
+  tests/test_sequoia_provider.py tests/backtest/test_sequoia_strategies.py
+```
+
+#### 回滚
+
+回滚前记录当前提交、镜像和数据目录状态。回滚只切换源码和镜像，不删除 `<DATA_DIR>`：
+
+```bash
+BRANCH=<已验证的上一版本分支或提交> sudo <DATA_DIR>/deploy.sh
+```
+
+如果发生启动失败，先查看：
+
+```bash
+docker compose logs --tail=200 app
+docker compose ps
+```
+
+认证文件、策略、行情、回测和扩展数据都属于运行数据，应在回滚过程中保留并按项目兼容性要求处理。
+
 ---
 
 ## 老 CPU 兼容(avx2/fma 缺失)
@@ -123,7 +345,7 @@ git pull
 在 `.env` 文件(或 Docker / 系统环境变量)里设置 `AUTH_PASSWORD`:
 
 ```bash
-AUTH_PASSWORD=你的密码
+AUTH_PASSWORD=<在部署主机本地填写的强密码>
 ```
 
 然后重启服务。启动时会自动:
