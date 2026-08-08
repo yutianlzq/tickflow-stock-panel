@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
@@ -482,6 +483,8 @@ def write_ext_parquet(
     config: ExtConfig,
     data_dir: Path,
     snapshot_date: date | None = None,
+    *,
+    replace_snapshot: bool = False,
 ) -> int:
     """将 DataFrame 写入扩展数据 Parquet。
 
@@ -505,8 +508,8 @@ def write_ext_parquet(
         cfg_dir.mkdir(parents=True, exist_ok=True)
         out_path = cfg_dir / "part.parquet"
 
-        # 如果已有文件，合并去重后覆盖
-        if out_path.exists():
+        # 默认合并快照；周期性“当前集合”预设可显式要求替换旧集合。
+        if out_path.exists() and not replace_snapshot:
             try:
                 existing = pl.read_parquet(out_path)
                 key = "symbol" if "symbol" in df.columns else df.columns[0]
@@ -529,9 +532,14 @@ def write_ext_parquet(
                 df = pl.concat([existing, df]).unique(subset=[key], keep="last")
             except Exception as e:
                 logger.warning("扩展表 %s 合并去重失败, 将覆盖写入: %s", config.id, e)
-
     df = cast_df_to_schema(df, config.fields)
-    df.write_parquet(out_path)
+    tmp_path = out_path.with_name(f".{out_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        df.write_parquet(tmp_path)
+        tmp_path.replace(out_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
     logger.info("扩展表写入: %s → %s (%d 行)", config.id, out_path, len(df))
     return len(df)
 
@@ -608,6 +616,8 @@ def rows_to_parquet(
     config: ExtConfig,
     data_dir: Path,
     snapshot_date: date | None = None,
+    *,
+    replace_snapshot: bool = False,
 ) -> int:
     """将 JSON 行列表转为 DataFrame 写入 Parquet，复用 write_ext_parquet 的存储逻辑。
 
@@ -618,4 +628,10 @@ def rows_to_parquet(
     df = apply_config_mapping(df, config, data_dir)
     if "symbol" in df.columns:
         df = df.with_columns(pl.col("symbol").cast(pl.Utf8))
-    return write_ext_parquet(df, config, data_dir, snapshot_date=snapshot_date)
+    return write_ext_parquet(
+        df,
+        config,
+        data_dir,
+        snapshot_date=snapshot_date,
+        replace_snapshot=replace_snapshot,
+    )

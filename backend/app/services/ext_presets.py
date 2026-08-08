@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import date
 from pathlib import Path
 
 from app.services.ext_data import (
@@ -96,8 +97,30 @@ def _industry_preset() -> ExtConfig:
     )
 
 
+def _private_placement_preset() -> ExtConfig:
+    """近期定向增发事件 (ext_private_placement)。"""
+    return ExtConfig(
+        id="ext_private_placement",
+        label="近期定增",
+        mode="snapshot",
+        fields=[
+            ExtField("symbol", "string", "标的代码"),
+            ExtField("code", "string", "代码"),
+            ExtField("股票简称", "string", "股票简称"),
+            ExtField("发行方式", "string", "发行方式"),
+            ExtField("发行日期", "string", "发行日期"),
+            ExtField("发行价格", "float", "发行价格"),
+            ExtField("发行数量", "float", "发行数量"),
+            ExtField("募集资金", "float", "募集资金"),
+        ],
+        description="AkShare 近 7 天定向增发事件 (安装 Sequoia-X 插件后手动获取)",
+        symbol_map={"type": "mapped", "col": "symbol"},
+        code_map={"type": "mapped", "col": "code"},
+    )
+
+
 def _presets() -> list[ExtConfig]:
-    return [_concept_preset(), _industry_preset()]
+    return [_concept_preset(), _industry_preset(), _private_placement_preset()]
 
 
 # ---------------------------------------------------------------------------
@@ -253,23 +276,36 @@ async def ensure_builtin_presets(data_dir: Path) -> None:
 
 
 async def fetch_preset(config_id: str, data_dir: Path) -> int:
-    """手动触发某个预设的数据拉取 (供 API 调用)。
-
-    Raises:
-        ValueError: config_id 不是内置预设
-        Exception: 网络请求/解析/写入失败 (由 API 层转 HTTP 错误)
-    """
+    """手动触发某个内置预设的数据拉取。"""
     config = get_preset(config_id)
     if config is None:
         raise ValueError(f"未知的内置预设: {config_id}")
 
-    flatten = _flatten_concept_rows if config_id == "ext_gn_ths" else _flatten_industry_rows
-
-    # 确保 config.json 存在 (用户可能从未启动过 ensure_builtin_presets)
     store = ExtConfigStore(data_dir)
     if store.get(config_id) is None:
         store.upsert(config)
 
-    n = await _seed_one(config, flatten, data_dir)
+    if config_id == "ext_private_placement":
+        import asyncio
+
+        from app.plugins.sequoia_x.events import fetch_private_placements
+
+        rows = await asyncio.wait_for(
+            asyncio.to_thread(fetch_private_placements),
+            timeout=120,
+        )
+        if not rows:
+            raise ValueError("近期无定向增发数据")
+        n = rows_to_parquet(
+            rows,
+            config,
+            data_dir,
+            snapshot_date=date.today(),
+            replace_snapshot=True,
+        )
+    else:
+        flatten = _flatten_concept_rows if config_id == "ext_gn_ths" else _flatten_industry_rows
+        n = await _seed_one(config, flatten, data_dir)
+
     logger.info("内置扩展表 %s 手动拉取成功: %d 行", config_id, n)
     return n

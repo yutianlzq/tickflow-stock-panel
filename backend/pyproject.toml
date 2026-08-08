@@ -49,6 +49,13 @@ legacy-cpu = [
     "polars[rtcompat]>=1.0",
 ]
 
+# Sequoia-X optional data plugin: Baostock daily K + AkShare event data.
+# Enable with: uv sync --extra sequoia
+sequoia = [
+    "baostock>=0.9",
+    "akshare>=1.10",
+]
+
 # vectorbt 还会引入绘图、交互组件等完整分析栈，仍保持为可选 extras。
 # Matrix 引擎只直接依赖上面的 numba/llvmlite 编译内核。
 # 启用:`uv sync --extra backtest`

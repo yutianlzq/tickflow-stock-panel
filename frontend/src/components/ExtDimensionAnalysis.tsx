@@ -1,5 +1,5 @@
 import { useMemo, useState, type ComponentType } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart3,
   CalendarDays,
@@ -11,6 +11,7 @@ import {
   Users,
 } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
+import { PresetFetchState } from '@/components/analysis-shared'
 import { api, type AnalysisColumn, type ExtDataConfig, type ExtDataField } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 
@@ -155,6 +156,7 @@ export function ExtDimensionAnalysis({
   keywords = [],
   fallbackFieldNames = [],
 }: DimensionAnalysisProps) {
+  const queryClient = useQueryClient()
   const configs = useQuery({ queryKey: QK.extData, queryFn: api.extDataList })
   const menuQuery = useQuery({
     queryKey: QK.analysisMenu(menuId ?? ''),
@@ -189,6 +191,16 @@ export function ExtDimensionAnalysis({
     queryKey: QK.extDataRows(activeConfigId, undefined, PAGE_LIMIT, columnsKey),
     queryFn: () => api.extDataRows(activeConfigId, { limit: PAGE_LIMIT, columns: requestedColumns }),
     enabled: !!activeConfigId,
+  })
+  const privatePlacementFetch = useMutation({
+    mutationFn: () => api.extDataPresetFetch('ext_private_placement'),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: QK.extData }),
+        queryClient.invalidateQueries({ queryKey: ['ext-data-rows', 'ext_private_placement'] }),
+        queryClient.invalidateQueries({ queryKey: QK.dataStatus }),
+      ])
+    },
   })
 
   const rows = rowsQuery.data?.rows ?? []
@@ -408,6 +420,18 @@ export function ExtDimensionAnalysis({
                     <tbody className="divide-y divide-border/70">
                       {rowsQuery.isLoading ? (
                         <tr><td className="px-4 py-8 text-center text-muted" colSpan={Math.max(displayColumns.length, 1)}>加载数据中…</td></tr>
+                      ) : tableRows.length === 0 && activeConfigId === 'ext_private_placement' ? (
+                        <tr>
+                          <td colSpan={Math.max(displayColumns.length, 1)}>
+                            <PresetFetchState
+                              title="还没有近期定增数据"
+                              hint="安装 Sequoia-X 插件依赖后，可从 AkShare 获取最近 7 天定向增发事件。"
+                              isLoading={privatePlacementFetch.isPending}
+                              error={privatePlacementFetch.error}
+                              onFetch={() => privatePlacementFetch.mutate()}
+                            />
+                          </td>
+                        </tr>
                       ) : tableRows.length === 0 ? (
                         <tr><td className="px-4 py-8 text-center text-muted" colSpan={Math.max(displayColumns.length, 1)}>暂无明细数据</td></tr>
                       ) : tableRows.slice(0, 300).map((row, i) => (

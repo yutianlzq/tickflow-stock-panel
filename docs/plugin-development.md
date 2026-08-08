@@ -5,7 +5,19 @@
 
 > ⚠️ **Docker 默认不打包 stock-sdk**(合规考虑:它抓取第三方财经网站接口,存在版权与反爬风险)。如需在 Docker 中启用,构建时传 `--build-arg INCLUDE_STOCKSDK=1`,使用风险自负。下方"手动安装依赖"适用于开发模式及自定义 Docker 构建。
 
-## 快速上手
+## Sequoia-X 插件
+
+仓库内置 `backend/app/plugins/sequoia_x/` 作为可选 Python 插件，整合 Sequoia-X 的 Baostock 日 K 与 AkShare 定增事件能力：
+
+- 安装依赖：在后端环境执行 `uv sync --extra sequoia`；也可在设置页安装插件依赖。未安装时插件只显示不可用状态，不影响 TickFlow 和应用启动。
+- `daily`：Baostock 沪深 A 股日 K，输出统一字段 `symbol/date/open/high/low/close/volume/amount`。
+- 价格口径：首版使用 Baostock 不复权日 K（`adjustflag=3`）；成交量从股转换为内部统一的手，成交额保持金额单位。不要把源项目 SQLite 的后复权数据直接当作当前 canonical 日 K。
+- 未提供：`adj_factor`、`minute`、`realtime`。选择 Sequoia-X 作为日 K provider 时，其他未声明数据集按现有能力路由处理，不静默伪造数据。
+- 标的范围：provider 只接受 `000001.SZ` / `600519.SH` 形式的沪深股票；ETF、指数和北交所代码不由首版日 K provider 处理。
+- 失败隔离：依赖缺失、登录失败、单标的查询失败、批次/worker 失败和空结果会记录可见状态并返回空或部分结果，保留已有本地数据，不阻断主流程。
+
+Sequoia-X 源项目的 `PrivatePlacementStrategy` 在当前项目中以 `ext_private_placement` 扩展快照承载，而不是重复注册一套策略。该快照由 AkShare `stock_qbzf_em()` 获取最近 7 天“定向增发”事件，成功的非空结果替换旧快照；空结果、异常或超时不会覆盖旧数据。
+
 
 一个插件 = 一个目录 + 一个 `plugin.yaml` 清单:
 

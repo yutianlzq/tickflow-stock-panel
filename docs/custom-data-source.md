@@ -14,7 +14,19 @@
 
 分钟K、财务、深度盘口暂时仍走 TickFlow。
 
-## 配置位置
+## Sequoia-X provider（可选插件）
+
+除 YAML HTTP 源外，项目还提供内置的 Python 插件 `sequoia_x`。它遵循同一 provider 路由和标准化链路，使用前在后端环境安装 `uv sync --extra sequoia`，然后在「设置 -> 数据源」选择日 K provider。
+
+该插件首版仅声明 `daily`：
+
+- 输入代码为 `000001.SZ` / `600519.SH`，仅支持沪深股票；
+- 输出不复权 OHLC，`volume` 已从 Baostock 的股转换为内部的手，`amount` 保持金额单位；
+- 不声明 `adj_factor`、`minute`、`realtime`，缺少这些能力时不会伪造或静默替换成错误口径；
+- Baostock/AkShare 缺失、登录失败、空数据和部分标的失败均应在插件状态或日志中可见，不能阻断默认 TickFlow 流程。
+
+源项目中的定增事件不是日 K provider 数据集，而是当前项目的 `ext_private_placement` 快照扩展。扩展页面手动获取 AkShare 最近 7 天定向增发事件，只有成功且非空的结果才会替换旧快照。
+
 
 把 YAML 放到运行数据目录下:
 

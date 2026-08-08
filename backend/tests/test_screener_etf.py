@@ -48,7 +48,7 @@ def test_all_builtin_strategies_use_matrix_backend_only():
     engine = _engine()
     assert engine.load_errors() == []
     strategies = [engine.get(meta["id"]) for meta in engine.list_strategies()]
-    assert len(strategies) == 18
+    assert len(strategies) == 24
     assert all(strategy.execution_backend == "matrix_native" for strategy in strategies)
     assert all(strategy.matrix_strategy is not None for strategy in strategies)
     assert all(strategy.filter_fn is None for strategy in strategies)
@@ -58,7 +58,7 @@ def test_all_builtin_strategies_use_matrix_backend_only():
 def test_all_builtin_matrix_formulas_accept_base_market_matrix():
     rows = []
     start = date(2024, 1, 1)
-    for offset in range(80):
+    for offset in range(130):
         close = 10.0 + offset * 0.04
         rows.append({
             "symbol": "000001.SZ",
@@ -71,6 +71,9 @@ def test_all_builtin_matrix_formulas_accept_base_market_matrix():
             "volume": 1000.0 + offset * 5.0,
             "amount": 100000.0,
             "raw_close": close,
+            "raw_high": close + 0.15,
+            "raw_low": close - 0.15,
+            "float_shares": 100_000_000.0,
             "turnover_rate": 5.0,
             "consecutive_limit_ups": 0,
         })

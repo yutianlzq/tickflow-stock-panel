@@ -1,0 +1,9 @@
+# Sequoia-X 可选 Python 数据源插件
+name: sequoia_x
+display_name: "Sequoia-X（Baostock/AkShare）"
+runtime: python
+entry: app.plugins.sequoia_x.provider:SequoiaXProvider
+check: app.plugins.sequoia_x.bridge:availability
+datasets: [daily]
+description: "Baostock 沪深 A 股不复权日 K 与标的维表；AkShare 用于定增事件扩展数据。首版不提供除权因子、实时或分钟行情。"
+install_hint: "设置 BACKEND_EXTRAS=sequoia 后重启，或在此点击安装依赖"

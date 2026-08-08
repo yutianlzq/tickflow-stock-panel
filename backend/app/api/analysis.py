@@ -111,13 +111,32 @@ def _save(request: Request, menu: AnalysisMenu) -> AnalysisMenu:
 
 
 def _default_menus(request: Request) -> list[AnalysisMenu]:
-    """自动生成的默认分析菜单。
+    """返回已就绪内置扩展表对应的只读默认菜单。"""
+    from app.services.ext_data import ExtConfigStore
 
-    历史上会扫描扩展数据配置,对含「概念」字段的表自动生成一个「概念分析」菜单。
-    现已关闭自动生成 —— 内置的概念分析页(/concept-analysis)已覆盖该场景,
-    自动菜单会造成导航重复。需要时用户可在「设置 → 扩展页面」手动创建。
-    """
-    return []
+    store = ExtConfigStore(_data_dir(request))
+    if store.get("ext_private_placement") is None:
+        return []
+    return [AnalysisMenu(
+        id="private_placement",
+        label="近期定增",
+        icon="table",
+        data_source="ext_private_placement",
+        template="table",
+        group_columns=[],
+        detail_columns=[
+            AnalysisColumn(field="股票简称", label="股票简称"),
+            AnalysisColumn(field="symbol", label="股票代码"),
+            AnalysisColumn(field="发行日期", label="发行日期", type="date", sortable=True),
+            AnalysisColumn(field="发行价格", label="发行价格", type="number", sortable=True),
+            AnalysisColumn(field="发行数量", label="发行数量", type="number", sortable=True),
+            AnalysisColumn(field="募集资金", label="募集资金", type="amount", sortable=True),
+        ],
+        default_sort=DefaultSort(field="发行日期", order="desc"),
+        visible=True,
+        order=90,
+        builtin=True,
+    )]
 
 
 @router.get("")

@@ -3186,6 +3186,40 @@ def valid_rolling_std(
     )
 
 
+def cross_section_percentile_rank(values: np.ndarray) -> np.ndarray:
+    """按每个时间截面计算平均名次百分位，忽略缺失值。"""
+    source = np.asarray(values, dtype=np.float32)
+    if source.ndim != 2:
+        raise ValueError("cross-section rank requires a 2D array")
+
+    def _compute() -> np.ndarray:
+        out = np.full(source.shape, np.nan, dtype=np.float32)
+        for time_id in range(source.shape[0]):
+            row = source[time_id]
+            valid_ids = np.flatnonzero(np.isfinite(row))
+            count = valid_ids.size
+            if count == 0:
+                continue
+            order = valid_ids[np.argsort(row[valid_ids], kind="stable")]
+            start = 0
+            while start < count:
+                stop = start + 1
+                value = row[order[start]]
+                while stop < count and row[order[stop]] == value:
+                    stop += 1
+                average_rank = (start + 1 + stop) / 2.0
+                out[time_id, order[start:stop]] = np.float32(average_rank / count)
+                start = stop
+        return out
+
+    return _cached_matrix_operation(
+        "cross_section_percentile_rank",
+        (source,),
+        {},
+        _compute,
+    )
+
+
 def rolling_quantile(values: np.ndarray, window: int, quantile: float) -> np.ndarray:
     source = np.asarray(values, dtype=np.float32)
     q = float(quantile)
